@@ -18,5 +18,5 @@ provider "azurerm" {
 # Create Resource Group in Azure
 resource "azurerm_resource_group" "example" {
   name     = "varun-tf-rg"
-  location = "west US"
+  location = "East US"
 }
