@@ -1,27 +1,41 @@
-name: Terraform Deployment
+name: Terraform CI/CD
 
 on:
+  # 1) Automatically run plan on every push to main
   push:
     branches:
       - main
+
+  # 2) Manually trigger apply or destroy from GitHub UI
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        type: choice
+        options:
+          - apply
+          - destroy
 
 jobs:
-  terraform:
-    name: Run Terraform on Azure
+  # -----------------------------
+  # Job 1: PLAN on every push
+  # -----------------------------
+  plan:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
 
     env:
       ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
       ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Setup Terraform
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
 
       - name: Terraform Init
@@ -30,5 +44,33 @@ jobs:
       - name: Terraform Plan
         run: terraform plan
 
+  # ----------------------------------------
+  # Job 2: APPLY or DESTROY (manual only)
+  # ----------------------------------------
+  apply_or_destroy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    env:
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        run: terraform init
+
       - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
         run: terraform apply -auto-approve
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: terraform destroy -auto-approve
