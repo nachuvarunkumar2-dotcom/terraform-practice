@@ -1,9 +1,16 @@
 name: Terraform Deployment
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Select Terraform Action"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - destroy
 
 jobs:
   terraform:
@@ -19,7 +26,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
       - name: Terraform Init
@@ -29,4 +36,9 @@ jobs:
         run: terraform plan
 
       - name: Terraform Apply
+        if: ${{ inputs.action == 'apply' }}
         run: terraform apply -auto-approve
+
+      - name: Terraform Destroy
+        if: ${{ inputs.action == 'destroy' }}
+        run: terraform destroy -auto-approve
