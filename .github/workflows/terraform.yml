@@ -1,4 +1,4 @@
-name: Terraform CI/CD (auto-plan, manual-apply/destroy)
+name: Terraform CI/CD (auto-plan, manual-apply, manual-destroy)
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Choose action to run"
+        description: "Choose Terraform action"
         required: true
         type: choice
         options:
@@ -19,18 +19,22 @@ permissions:
   id-token: write
 
 env:
-  TF_PLAN_FILE: plan.tfplan
+  TF_PLAN: plan.tfplan
 
 jobs:
+
+  # ----------------------------------------------------------
+  # AUTO PLAN ON PUSH
+  # ----------------------------------------------------------
   plan:
-    # auto-run on push only
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Login to Azure
+      - name: Azure Login
         uses: azure/login@v1
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -40,40 +44,44 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: '1.6.0'
+          terraform_version: "1.6.0"
 
-      - name: Terraform init
+      - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Terraform validate
-        run: terraform validate || true
+      - name: Terraform Validate
+        run: terraform validate
 
-      - name: Terraform plan (save plan file)
-        run: terraform plan -out=${{ env.TF_PLAN_FILE }} -input=false
+      - name: Terraform Plan
+        run: terraform plan -out=${{ env.TF_PLAN }} -input=false
 
-      - name: Upload plan artifact
+      - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
-          path: ${{ env.TF_PLAN_FILE }}
+          name: tf-plan
+          path: ${{ env.TF_PLAN }}
 
-  manual_action:
-    # manual trigger: workflow_dispatch
+
+  # ----------------------------------------------------------
+  # MANUAL APPLY / DESTROY
+  # ----------------------------------------------------------
+  manual_actions:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: production
+    environment: production   # requires approval
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Try download plan artifact (non-fatal)
+      - name: Try to download previous plan (optional)
         uses: actions/download-artifact@v4
         with:
-          name: terraform-plan
-          path: ./artifact
+          name: tf-plan
+          path: ./plan-artifact
         continue-on-error: true
 
-      - name: Login to Azure
+      - name: Azure Login
         uses: azure/login@v1
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -83,25 +91,25 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: '1.6.0'
+          terraform_version: "1.6.0"
 
-      - name: Terraform init
+      - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Create fresh plan (apply will use this)
-        if: ${{ github.event.inputs.action == 'apply' }}
-        run: terraform plan -out=${{ env.TF_PLAN_FILE }} -input=false
 
-      - name: Terraform apply (manual)
+      # ------------------------------------------------------
+      # MANUAL APPLY
+      # ------------------------------------------------------
+      - name: Manual Apply (create/update resources)
         if: ${{ github.event.inputs.action == 'apply' }}
         run: |
-          # prefer downloaded artifact if present, else use the freshly created plan
-          if [ -f ./artifact/plan.tfplan ]; then
-            terraform apply -input=false -auto-approve ./artifact/plan.tfplan
-          else
-            terraform apply -input=false -auto-approve ${{ env.TF_PLAN_FILE }}
-          fi
+          terraform plan -out=${{ env.TF_PLAN }} -input=false
+          terraform apply -auto-approve ${{ env.TF_PLAN }}
 
-      - name: Terraform destroy (manual)
+
+      # ------------------------------------------------------
+      # MANUAL DESTROY
+      # ------------------------------------------------------
+      - name: Manual Destroy (delete resources)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: terraform destroy -auto-approve -input=false
