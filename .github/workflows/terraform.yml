@@ -1,8 +1,9 @@
-name: Terraform CI/CD (single-file: auto-init+plan, manual-apply/destroy)
+name: Terraform CI/CD (auto-plan, manual-apply/destroy)
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       action:
@@ -21,10 +22,8 @@ env:
   TF_PLAN_FILE: plan.tfplan
 
 jobs:
-  # ---------------------------
-  # Job A: Auto init + plan on push
-  # ---------------------------
   plan:
+    # auto-run on push only
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -41,7 +40,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: "1.6.0"
+          terraform_version: '1.6.0'
 
       - name: Terraform init
         run: terraform init -input=false
@@ -58,22 +57,20 @@ jobs:
           name: terraform-plan
           path: ${{ env.TF_PLAN_FILE }}
 
-  # ---------------------------
-  # Job B: Manual apply OR destroy (requires approval)
-  # ---------------------------
   manual_action:
+    # manual trigger: workflow_dispatch
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: production   # <--- set "production" environment in repo settings and enable required reviewers to require approval
+    environment: production
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Try downloading plan artifact (if any)
+      - name: Try download plan artifact (non-fatal)
         uses: actions/download-artifact@v4
         with:
           name: terraform-plan
-          path: ./artifact || true
+          path: ./artifact
         continue-on-error: true
 
       - name: Login to Azure
@@ -86,31 +83,25 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: "1.6.0"
+          terraform_version: '1.6.0'
 
       - name: Terraform init
         run: terraform init -input=false
 
-      # If user chose "apply" and plan artifact exists, use it; otherwise create a fresh plan.
-      - name: Use existing plan if found
-        if: ${{ github.event.inputs.action == 'apply' && (exists('artifact/plan.tfplan') || exists('artifact/plan.tfplan.json')) }}
-        run: |
-          echo "Plan artifact present — using it for apply."
-
-      - name: Create plan if missing (for apply)
-        if: ${{ github.event.inputs.action == 'apply' && !(exists('artifact/plan.tfplan') || exists('artifact/plan.tfplan.json')) }}
+      - name: Create fresh plan (apply will use this)
+        if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform plan -out=${{ env.TF_PLAN_FILE }} -input=false
 
-      - name: Terraform Apply (use plan file)
+      - name: Terraform apply (manual)
         if: ${{ github.event.inputs.action == 'apply' }}
         run: |
-          # if artifact was downloaded it will be at ./artifact/plan.tfplan
-          if [ -f artifact/plan.tfplan ]; then
-            terraform apply -input=false -auto-approve artifact/plan.tfplan
+          # prefer downloaded artifact if present, else use the freshly created plan
+          if [ -f ./artifact/plan.tfplan ]; then
+            terraform apply -input=false -auto-approve ./artifact/plan.tfplan
           else
             terraform apply -input=false -auto-approve ${{ env.TF_PLAN_FILE }}
           fi
 
-      - name: Terraform Destroy (manual)
+      - name: Terraform destroy (manual)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: terraform destroy -auto-approve -input=false
