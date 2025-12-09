@@ -1,100 +1,100 @@
 name: Terraform CI/CD (single-file: auto-init+plan, manual-apply/destroy)
 
-# Run plan automatically on pushes to main.
-# Allow manual runs for apply/destroy via workflow_dispatch inputs.
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
     inputs:
       action:
-        description: 'Action to run'
+        description: "Choose action to run"
         required: true
-        default: 'apply'
         type: choice
+        default: "plan"
         options:
+          - plan
           - apply
           - destroy
 
-env:
-  TF_WORKING_DIR: '.'             # change if your TF files are in a subfolder
-  TF_PLAN_FILE: 'plan.tfplan'
-
 jobs:
   plan:
-    name: plan
+    # run automatically on push OR when workflow_dispatch action=plan
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1) Login to Azure using Service Principal (must exist as repo secrets)
       - name: Azure Login
         uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          enable-AzPSSession: true
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.7'
 
       - name: Terraform Init
-        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init -input=false
 
       - name: Terraform Validate
-        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform validate || true
 
-      - name: Terraform Plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -out=${{ env.TF_PLAN_FILE }}
+      - name: Terraform Plan (save plan artifact)
+        run: |
+          terraform plan -out=plan.tfplan -input=false
+          # save a human-readable plan for logs (optional)
+          terraform show -no-color plan.tfplan > plan.txt || true
 
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan
-          path: ${{ env.TF_WORKING_DIR }}/${{ env.TF_PLAN_FILE }}
+          name: terraform-plan
+          path: |
+            plan.tfplan
+            plan.txt
 
-  # Manual apply and destroy jobs:
-  # They only run when workflow_dispatch is invoked and input 'action' matches.
   apply:
-    name: apply
-    needs: plan
+    # only when user triggers workflow_dispatch with action=apply
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply'
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply' }}
-    # Protect this job so it requires approval before running:
-    environment: production
+    needs: []
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download plan artifact
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.7'
+
+      - name: Download plan artifact (if exists)
         uses: actions/download-artifact@v4
         with:
-          name: tfplan
+          name: terraform-plan
           path: .
 
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          enable-AzPSSession: true
+      - name: Terraform Init
+        run: terraform init -input=false
 
-      - name: Terraform Apply (use generated plan)
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -input=false -auto-approve ${{ env.TF_PLAN_FILE }}
+      - name: Terraform Apply (use plan if present, else run apply)
+        run: |
+          if [ -f ./plan.tfplan ]; then
+            terraform apply -input=false -auto-approve ./plan.tfplan
+          else
+            echo "Plan artifact not found — running 'terraform apply' directly"
+            terraform apply -input=false -auto-approve
+          fi
 
   destroy:
-    name: destroy
-    needs: plan
+    # only when user triggers workflow_dispatch with action=destroy
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy' }}
-    environment: production
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -102,11 +102,15 @@ jobs:
       - name: Azure Login
         uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          enable-AzPSSession: true
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Terraform Destroy (manual confirm via env approval)
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform destroy -auto-approve
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.7'
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Destroy (manual)
+        run: terraform destroy -auto-approve -input=false
