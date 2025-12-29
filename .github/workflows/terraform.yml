@@ -1,108 +1,30 @@
-name: Terraform CI/CD (single-file: auto-init+plan, manual-apply/destroy)
+name: Terraform CI/CD
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      action:
-        description: "Action to run: plan | apply | destroy"
-        required: true
-        default: "plan"
 
 jobs:
-  plan:
-    # run automatically on push OR when workflow_dispatch action=plan
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')
+  terraform:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: '1.5.7'
+          terraform_version: 1.5.7
 
       - name: Terraform Init
-        run: terraform init -input=false
+        run: terraform init
 
-      - name: Terraform Validate
-        run: terraform validate || true
+      - name: Terraform Plan
+        run: terraform plan -out=plan.tfplan
 
-      - name: Terraform Plan (save plan artifact)
-        run: |
-          terraform plan -out=plan.tfplan -input=false
-          terraform show -no-color plan.tfplan > plan.txt || true
-
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan
-          path: |
-            plan.tfplan
-            plan.txt
-
-  apply:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply'
-    runs-on: ubuntu-latest
-    needs: []
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: '1.5.7'
-
-      - name: Download plan artifact (if exists)
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan
-          path: .
-
-      - name: Terraform Init
-        run: terraform init -input=false
-
-      - name: Terraform Apply (use plan if present, else run apply)
-        run: |
-          if [ -f ./plan.tfplan ]; then
-            terraform apply -input=false -auto-approve ./plan.tfplan
-          else
-            echo "Plan artifact not found — running 'terraform apply' directly"
-            terraform apply -input=false -auto-approve
-          fi
-
-  destroy:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: '1.5.7'
-
-      - name: Terraform Init
-        run: terraform init -input=false
-
-      - name: Terraform Destroy (manual)
-        run: terraform destroy -auto-approve -input=false
+      - name: Terraform Apply
+        if: github.event_name == 'workflow_dispatch'
+        run: terraform apply -auto-approve plan.tfplan
